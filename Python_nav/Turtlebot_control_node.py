@@ -6,7 +6,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
-from sensor_msgs.msg import JointState
+from sensor_msgs.msg import JointState, LaserScan
 from geometry_msgs.msg import Twist, PoseStamped
 from utils.msg import Goal
 from rclpy.qos import QoSProfile
@@ -49,10 +49,17 @@ class Minimal_path_sequence(Node):
 
         # -> Setup robot ID
         self.robot_id = "Turtlebot_1"
+        self.namespace = "Turtle_1"
 
         # -> Setup goto specs
         self.success_distance_range = .10 
-        self.success_angle_range = 7.    # %
+        self.success_angle_range = 2.5    # %
+        self.dynamic_success_angle_range = 2.5
+        self.dynamic_success_angle_range_adjustment = 4
+
+        # -> Setup robot collision avoidance specs
+        self.collision_cone_angle = 120 # deg, full cone (/2 for each side)
+        self.collision_treshold = 0.75
 
         # -> Setup robot states
         self.goal_sequence_backlog = {}
@@ -62,9 +69,13 @@ class Minimal_path_sequence(Node):
         self.current_angular_velocity = 0.
         self.current_linear_velocity = 0.
 
+        self.target_angular_velocity = 0.
+        self.target_linear_velocity = 0.
+
         # -> Create storage variables
         self.position = None
         self.orientation = None
+        self.lazer_scan = None
 
         # -> Initiate datastreams
         # Instruction publisher
@@ -72,7 +83,7 @@ class Minimal_path_sequence(Node):
         
         self.instruction_publisher = self.create_publisher(
             msg_type=Twist,
-            topic=f'/Turtle_1/cmd_vel',
+            topic=f"/{self.namespace}/cmd_vel",
             qos_profile=qos
             )
 
@@ -99,10 +110,24 @@ class Minimal_path_sequence(Node):
 
         self.odom_subscription = self.create_subscription(
             msg_type=PoseStamped,
-            topic="/Turtle_1/pose",
+            topic=f"/{self.namespace}/pose",
             callback=self.odom_subscriber_callback,
             qos_profile=qos
             )
+
+        # Lazer scan subscription
+        qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
+            history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_LAST,
+            depth=1
+            )
+
+        self.lazer_scan_subscription = self.create_subscription(
+            msg_type=LaserScan,
+            topic=f"/{self.namespace}/scan",
+            callback=self.lazer_scan_callback,
+            qos_profile=qos
+        )
 
         # -> Status printer
         timer_period = 1.  # seconds
@@ -110,6 +135,44 @@ class Minimal_path_sequence(Node):
             timer_period, 
             self.state_callback
             )
+
+    def lazer_scan_callback(self, msg):
+        scan = list(msg.ranges)
+        
+        range_min = msg.range_min
+        range_max = msg.range_max
+
+        # -> Clean up ranges
+        for i, range_measure in enumerate(scan):
+            if range_measure < range_min or range_measure > range_max:
+                scan[i] = None
+
+        self.lazer_scan = scan
+
+    @property
+    def collision_cone_scan(self):
+        if self.lazer_scan is not None:
+            positive_half = self.lazer_scan[:int(self.collision_cone_angle/2)]
+            negative_half = self.lazer_scan[-int(self.collision_cone_angle/2):]
+
+            return positive_half + negative_half
+
+        else:
+            return []
+
+    @property
+    def on_collision_course(self):
+        for i in self.collision_cone_scan:
+            if i is None:
+                pass
+
+            elif i < self.collision_treshold:
+                print("!!!!!!!!!!!!!!!!!! ON COLLISION COURSE !!!!!!!!!!!!!!!!!!")
+                return True
+            else:
+                pass
+
+        return False
 
     def state_callback(self):
         print("\n")
@@ -119,8 +182,21 @@ class Minimal_path_sequence(Node):
         if self.goal_sequence is not None:
             print(f"--> Goal: {self.goal}")
             print(f"--> distance_to_goal: {round(self.distance_to_goal, 3)}")
+
             angle_diff = self.goal_angle - self.orientation
-            print(f"--> Angle difference: {round(angle_diff)} degrees ({round(abs(angle_diff/360)*100, 2)}%)")
+
+            if abs(angle_diff) > 180:
+                new_angle_diff = 180 - (abs(angle_diff) - 180)
+                
+                if angle_diff < 0:
+                    angle_diff = new_angle_diff
+                
+                else:
+                    angle_diff = -new_angle_diff
+
+            angle_diff_percent = abs(angle_diff/180)
+
+            print(f"--> Angle difference: {round(angle_diff)} degrees ({round(angle_diff_percent*100, 2)}%)")
 
     def odom_subscriber_callback(self, msg):
         self.position = [msg.pose.position.x, msg.pose.position.y]
@@ -224,7 +300,47 @@ class Minimal_path_sequence(Node):
 
     @property
     def goal_angle(self):
-        return math.atan2(self.path_vector[1], self.path_vector[0]) * 180/math.pi
+        angle = math.atan2(self.path_vector[1], self.path_vector[0]) * 180/math.pi
+        
+        # -> Convert to 0<->180/0<->-180
+        if angle > 180:
+            return -360 + angle
+        else:
+            return angle
+    
+    @staticmethod
+    def make_simple_profile(output, input, slop):
+        if input > output:
+            output = min(input, output + slop)
+        elif input < output:
+            output = max(input, output - slop)
+        else:
+            output = input
+
+        return output
+
+    @staticmethod
+    def __constrain(input_vel, low_bound, high_bound):
+        if input_vel < low_bound:
+            input_vel = low_bound
+        elif input_vel > high_bound:
+            input_vel = high_bound
+        else:
+            input_vel = input_vel
+
+        return input_vel
+
+    def check_linear_limit_velocity(self, velocity):
+        if TURTLEBOT3_MODEL == 'burger':
+            return self.__constrain(velocity, -BURGER_MAX_LIN_VEL, BURGER_MAX_LIN_VEL)
+        else:
+            return self.__constrain(velocity, -WAFFLE_MAX_LIN_VEL, WAFFLE_MAX_LIN_VEL)
+
+    def check_angular_limit_velocity(self, velocity):
+        if TURTLEBOT3_MODEL == 'burger':
+            return self.__constrain(velocity, -BURGER_MAX_ANG_VEL, BURGER_MAX_ANG_VEL)
+        else:
+            return self.__constrain(velocity, -WAFFLE_MAX_ANG_VEL, WAFFLE_MAX_ANG_VEL)
 
     def check_subgoal_state(self):
         # -> Remove sub-goal if reached
@@ -259,81 +375,112 @@ class Minimal_path_sequence(Node):
             self.goal_sequence = goal_sequence["sequence"]
             self.goal_id = goal_sequence["ID"]
             self.goal_sequence_priority = selected_goal_sequence_priority
-
+    
     def determine_instruction(self):
-        # -> Check whether the robot is aligned with the path vector
-        goal_angle = self.goal_angle
+        # -> Determine if on collision course
+        if self.on_collision_course:
+            # -> Perform avoidance maneuvre
+            self.target_angular_velocity = BURGER_MAX_ANG_VEL
+            self.target_linear_velocity = BURGER_MAX_LIN_VEL
 
-        # if goal_angle < 0:
-        #     goal_angle = abs(goal_angle)
+        else:
+            # -> Calculate angle difference (negative diff = clockwise turn required)
+            angle_diff = self.goal_angle - self.orientation
 
-        # # -> Check for goal quadrant
-        # if self.goal[0] > self.position[0]:
-        #     goal_angle += 180
-
-        angle_diff = goal_angle - self.orientation
-        angle_diff_percent = abs(angle_diff/360)
-
-        if self.verbose == 3:
-            print("\n------------------------------------------------------")
-            print("self.position:", self.position, "self.goal", self.goal)
-            print("self.orientation:", self.orientation)
-            print("self.path_vector:", self.path_vector)
-            print("self.distance_to_goal:", self.distance_to_goal)
-            print("goal_angle: ", goal_angle)        
-            print("angle_diff: ", angle_diff)
-            print("angle_diff_precent", angle_diff_percent * 100, "%")
-            print("success_angle_range", self.success_angle_range)
-            print("------------------------------------------------------")
-            
-        # ======================================================================== Solving for angular velocity
-        if abs(angle_diff_percent)*100 > self.success_angle_range:
-            if self.verbose in [1, 2, 3]:
-                print("--> Correcting angle")
+            # -> Select shorter side of turn
+            if abs(angle_diff) > 180:
+                new_angle_diff = 180 - (abs(angle_diff) - 180)
                 
-            # -> halt robot
-            linear_velocity = self.current_linear_velocity * -1
-            self.current_linear_velocity = 0.0
-
-            # -> Solve for angular velocity instruction magnitude
-            angular_velocity = (BURGER_MAX_ANG_VEL - 1/2*(1-abs(angle_diff_percent)))
-
-            if abs(angular_velocity) > BURGER_MAX_ANG_VEL:
-                if angular_velocity < 0:
-                    angular_velocity = -BURGER_MAX_ANG_VEL
+                if angle_diff < 0:
+                    angle_diff = new_angle_diff
+                
                 else:
-                    angular_velocity = BURGER_MAX_ANG_VEL
+                    angle_diff = -new_angle_diff
 
-            # -> Inverse rotation direction if shorter
-            if angle_diff > 180 or angle_diff < 0:
-                angular_velocity = angular_velocity * -1
+            angle_diff_percent = abs(angle_diff/180)
 
-            # -> Update current_angular_velocity state
-            self.current_angular_velocity = angular_velocity
+            if self.verbose == 3:
+                print("\n------------------------------------------------------")
+                print("self.position:", self.position, "self.goal", self.goal)
+                print("self.path_vector:", self.path_vector)
+                print("self.distance_to_goal:", self.distance_to_goal)
+                print("self.orientation:", self.orientation)
+                print("goal_angle: ", self.goal_angle)        
+                print("angle_diff: ", angle_diff)
+                print("angle_diff_precent", angle_diff_percent * 100, "%")
+                print("success_angle_range", self.success_angle_range)
+                print("------------------------------------------------------")
 
-            return linear_velocity, angular_velocity
+            # ======================================================================== Solving for angular velocity
+            if abs(angle_diff_percent)*100 > self.dynamic_success_angle_range:
+                self.dynamic_success_angle_range = self.success_angle_range
 
-        else:
-            # -> Halt robot rotation
-            angular_velocity = self.current_angular_velocity * -1
-            self.current_angular_velocity = 0.0
+                if self.verbose in [1, 2, 3]:
+                    print("--> Correcting angle")
+                    
+                # -> halt robot
+                self.current_linear_velocity = 0.0
+                self.target_linear_velocity = 0.0
 
-        # ======================================================================== Solving for linear velocity
-        if self.distance_to_goal > self.success_distance_range and self.current_angular_velocity == 0:
-            if self.verbose in [1, 2, 3]:
-                print("--> Correction velocity")
-            # -> Solve for linear velocity instruction
-            linear_velocity = (BURGER_MAX_LIN_VEL) - 0.01
+                # -> Solve for angular velocity instruction magnitude
+                self.target_angular_velocity = BURGER_MAX_ANG_VEL * (1 - 1/2*(1-angle_diff_percent))
 
-            # -> Update current_linear_velocity state
-            self.current_linear_velocity = linear_velocity
+                # -> Apply robot performance ceiling for angular velocity
+                if angle_diff < 0:
+                    self.target_angular_velocity = \
+                        self.check_angular_limit_velocity(self.target_angular_velocity - ANG_VEL_STEP_SIZE)
 
-        else:
-            # -> Halt robot
-            linear_velocity = self.current_linear_velocity * -1
-            self.current_linear_velocity = 0.0
+                else:
+                    self.target_angular_velocity = \
+                        self.check_angular_limit_velocity(self.target_angular_velocity + ANG_VEL_STEP_SIZE)
 
-        return linear_velocity, angular_velocity
+
+                # -> Apply robot performance floor for angular velocity
+                if abs(self.target_angular_velocity) < 0.1:
+                    if angle_diff < 0:
+                        self.target_angular_velocity = -0.1
+                    else:
+                        self.target_angular_velocity = 0.1
+
+                if angle_diff < 0:
+                    self.target_angular_velocity = -self.target_angular_velocity
+
+            else:
+                # -> Halt robot rotation
+                self.current_angular_velocity = 0.0
+                self.target_angular_velocity = 0.0
+
+            # ======================================================================== Solving for linear velocity
+            if self.distance_to_goal > self.success_distance_range and self.current_angular_velocity == 0:
+                self.dynamic_success_angle_range = self.success_angle_range * self.dynamic_success_angle_range_adjustment
+
+                if self.verbose in [1, 2, 3]:
+                    print("--> Correction velocity")
+                # -> Solve for linear velocity instruction
+                self.target_linear_velocity = BURGER_MAX_LIN_VEL
+
+                self.target_linear_velocity = \
+                    self.check_linear_limit_velocity(self.target_linear_velocity + LIN_VEL_STEP_SIZE)
+
+            else:
+                # -> Halt robot
+                self.current_linear_velocity = 0.0
+                self.target_linear_velocity = 0.0
+
+        # -> Create instruction
+        self.current_angular_velocity = self.make_simple_profile(
+            output=self.current_angular_velocity,
+            input=self.target_angular_velocity,
+            slop=(ANG_VEL_STEP_SIZE / 2.0)
+            )
+
+        self.current_linear_velocity = self.make_simple_profile(
+            output=self.current_linear_velocity,
+            input=self.target_linear_velocity,
+            slop=LIN_VEL_STEP_SIZE / 2.0
+            )
+
+        return self.current_linear_velocity, self.current_angular_velocity
 
 
     @staticmethod
