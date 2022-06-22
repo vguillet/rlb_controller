@@ -58,7 +58,7 @@ class Minimal_path_sequence(Node):
         self.dynamic_success_angle_range_adjustment = 4
 
         # -> Setup robot collision avoidance specs
-        self.collision_cone_angle = 120 # deg, full cone (/2 for each side)
+        self.collision_cone_angle = 100 # deg, full cone (/2 for each side)
         self.collision_treshold = 0.75
 
         # -> Setup robot states
@@ -197,6 +197,7 @@ class Minimal_path_sequence(Node):
             angle_diff_percent = abs(angle_diff/180)
 
             print(f"--> Angle difference: {round(angle_diff)} degrees ({round(angle_diff_percent*100, 2)}%)")
+            print(f"--> Success angle range: {self.dynamic_success_angle_range}")
 
     def odom_subscriber_callback(self, msg):
         self.position = [msg.pose.position.x, msg.pose.position.y]
@@ -263,7 +264,7 @@ class Minimal_path_sequence(Node):
                                     f"\n       w: {twist.angular.z}")
         
     def goal_subscriber_callback(self, msg):
-        print(f"++++++++++++++++++++++++++++++ Goal sequence {msg.goal_sequence_id} received by {self.robot_id} ++++++++++++++++++++++++++++++")
+        print(f"++++++++++++++++++++++++++++++ Goal sequence {msg.goal_sequence_id} (for {msg.robot_id}) received by {self.robot_id} ++++++++++++++++++++++++++++++")
         # -> If message is addressed to robot
         if msg.robot_id == self.robot_id:
             goal_sequence = {
@@ -380,7 +381,7 @@ class Minimal_path_sequence(Node):
         # -> Determine if on collision course
         if self.on_collision_course:
             # -> Perform avoidance maneuvre
-            self.target_angular_velocity = BURGER_MAX_ANG_VEL
+            self.target_angular_velocity = BURGER_MAX_ANG_VEL * 2/3
             self.target_linear_velocity = BURGER_MAX_LIN_VEL
 
         else:
