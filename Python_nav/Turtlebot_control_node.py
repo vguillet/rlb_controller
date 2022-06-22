@@ -457,6 +457,7 @@ class Minimal_path_sequence(Node):
 
                 if self.verbose in [1, 2, 3]:
                     print("--> Correction velocity")
+                    
                 # -> Solve for linear velocity instruction
                 self.target_linear_velocity = BURGER_MAX_LIN_VEL
 
