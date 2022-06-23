@@ -13,6 +13,9 @@ from rclpy.qos import QoSProfile
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 import numpy as np
 import math
+import random
+import time
+
 # -> Create turtlbot namespace
 if len(sys.argv) == 1:
 	turtle_id = "1"
@@ -53,13 +56,13 @@ class Minimal_path_sequence(Node):
 
         # -> Setup goto specs
         self.success_distance_range = .10 
-        self.success_angle_range = 2.5    # %
-        self.dynamic_success_angle_range = 2.5
+        self.success_angle_range = 3.0    # %
+        self.dynamic_success_angle_range = 3.0
         self.dynamic_success_angle_range_adjustment = 4
 
         # -> Setup robot collision avoidance specs
-        self.collision_cone_angle = 100 # deg, full cone (/2 for each side)
-        self.collision_treshold = 0.75
+        self.collision_cone_angle = 80 # deg, full cone (/2 for each side)
+        self.collision_treshold = 0.5
 
         # -> Setup robot states
         self.goal_sequence_backlog = {}
@@ -71,6 +74,9 @@ class Minimal_path_sequence(Node):
 
         self.target_angular_velocity = 0.
         self.target_linear_velocity = 0.
+
+        self.collision_timer = 0.
+        self.collision_timer_length = 2.0
 
         # -> Create storage variables
         self.position = None
@@ -175,6 +181,9 @@ class Minimal_path_sequence(Node):
         return False
 
     def state_callback(self):
+        if self.collision_timer > 0:
+            self.collision_timer -= 1
+
         print("\n")
         print(f"--> position: {self.position}")
         print(f"--> orientation: {self.orientation}")
@@ -380,8 +389,14 @@ class Minimal_path_sequence(Node):
     def determine_instruction(self):
         # -> Determine if on collision course
         if self.on_collision_course:
+            self.collision_timer = self.collision_timer_length
+
             # -> Perform avoidance maneuvre
             self.target_angular_velocity = BURGER_MAX_ANG_VEL * 2/3
+            self.target_linear_velocity = 0.
+
+        elif self.collision_timer > 0:
+            self.target_angular_velocity = 0.
             self.target_linear_velocity = BURGER_MAX_LIN_VEL
 
         else:
