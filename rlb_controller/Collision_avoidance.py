@@ -10,12 +10,16 @@ class Collision_avoidance:
     def __init__(self):
         # -> Setup state tracker
         self.collision_delay = 0.
-        self.collision_mode_switch = False  # Used to control collision message
+        self.collision_state = 0  # Used to control collision message
         self.collision_direction = None
 
         # -> Setup cones dict
         self.vision_cones = vision_cones
-
+        self.side_vision_cones = side_vision_cones
+        
+        self.l_side_cone_toggle = False
+        self.r_side_cone_toggle = True
+        
         # ----------------------------------- Collision timer
         self.timer_period = .1  # seconds
 
@@ -40,24 +44,43 @@ class Collision_avoidance:
         '''
         # -> If on direct collision course
         if self.on_collision_course:
+            # -> Reset collision delay
             self.collision_delay = self.collision_delay_length
+
+            # -> Set collision state to 1 (direct collision)
+            self.collision_state = 1
 
             # -> Perform avoidance maneuvre
             if self.collision_direction == "l":
-                self.target_angular_velocity = -self.BURGER_MAX_ANG_VEL * 2/3
+                self.target_angular_velocity = -self.BURGER_MAX_ANG_VEL * collision_rotation_speed_fraction
+
+                # -> Toggle left vision cones
+                self.l_side_cone_toggle = True
+
             else:
-                self.target_angular_velocity = self.BURGER_MAX_ANG_VEL * 2/3
-                            
+                self.target_angular_velocity = self.BURGER_MAX_ANG_VEL * collision_rotation_speed_fraction
+                
+                # -> Toggle right vision cones
+                self.r_side_cone_toggle = True
+
             self.target_linear_velocity = 0.
 
         # -> If collision timer is still running
-        elif self.collision_delay > 0:
+        elif not self.cleared_obstacle or self.collision_delay > 0:
+            # -> Set collision state to 2 (avoiding collision)
+            self.collision_state = 2
+
             self.target_angular_velocity = 0.
             self.target_linear_velocity = self.BURGER_MAX_LIN_VEL
 
         else:
-            print("!!!!! Invalide collision avoidance instruction call !!!!!")
-            pass
+            # -> Set collision state to 0 (no collision collision)
+            self.collision_state = 0
+            self.collision_direction = None
+
+            self.__publish_collision_teamcomm(
+                cone_triggered=None)
+
 
     @property
     def collision_avoidance_mode(self):
@@ -65,15 +88,67 @@ class Collision_avoidance:
         Used ot check if collision avoidance mode is enabled
         '''
         # Return true if on collision course or collision timer is still running
-        if self.collision_delay > 0 or self.on_collision_course:
+        if self.on_collision_course or self.collision_state in [1, 2]:
             return True
         else:
             return False
 
-    # ================================================= Utils
+    # ================================================= Side scan
+    def side_collision_cone_scan(self, cone_ref: str) -> list:
+        '''
+        Used to retrieve side collision cone from lazer scan
+        '''
+
+        cone_angle = self.side_vision_cones[cone_ref]["angle"]
+
+        if self.lazer_scan is not None:
+            if self.collision_direction == "l":
+                positive_half = self.lazer_scan[:int(cone_angle/2 + 90)]
+                negative_half = self.lazer_scan[-int(cone_angle/2 + 90):]
+            
+            else:
+                positive_half = self.lazer_scan[:int(cone_angle/2 + 90)]
+                negative_half = self.lazer_scan[-int(cone_angle/2 + 90):]  
+
+            return positive_half + negative_half
+
+        else:
+            return []
+
+    @property
+    def cleared_obstacle(self):
+        '''
+        Used to determined if obstacle is detected in side collision cone
+        '''
+        
+        for cone_ref, cone_properties in self.side_vision_cones.items():
+            cone_scan = self.side_collision_cone_scan(
+                cone_ref=cone_ref
+                )
+
+            # -> Check collision cone
+            for i, val in enumerate(cone_scan):
+                if val is None:
+                    pass
+
+                elif val < cone_properties["threshold"]:
+                    self.__publish_collision_teamcomm(
+                        cone_triggered=cone_ref)
+
+                    # -> Return True as obstacles are detected
+                    return False
+                
+                else:
+                    pass
+
+        # -> Return True as no more obstacles are detected
+        return True
+
+
+    # ================================================= Front scan
     def collision_cone_scan(self, cone_ref: str) -> list:
         '''
-        Used to retreive collision cone from lazer scan
+        Used to retrieve collision cone from lazer scan
         '''
 
         cone_angle = self.vision_cones[cone_ref]["angle"]
@@ -96,15 +171,13 @@ class Collision_avoidance:
         for cone_ref, cone_properties in self.vision_cones.items():
             cone_scan = self.collision_cone_scan(cone_ref=cone_ref)
 
-            # -> Check collision subcone
+            # -> Check collision cone
             for i, val in enumerate(cone_scan):
                 if val is None:
                     pass
 
                 elif val < cone_properties["threshold"]:
-                    self.collision_mode_switch = True
                     self.__publish_collision_teamcomm(
-                        collision_state=True, 
                         cone_triggered=cone_ref)
 
                     if i < len(cone_scan)/2:
@@ -119,28 +192,18 @@ class Collision_avoidance:
                 else:
                     pass
 
-        if self.collision_mode_switch:
-            self.collision_mode_switch = False
-            self.__publish_collision_teamcomm(
-                collision_state=False, 
-                cone_triggered=None)
-
-            self.collision_direction = None
-
-
         return False
 
-    def __publish_collision_teamcomm(self, collision_state: bool, cone_triggered: str or None = None):
+    def __publish_collision_teamcomm(self, cone_triggered: str or None = None):
             # -> Announce end of collision on teams comms
             msg = TeamComm()
             msg.robot_id = self.robot_id
             msg.type = "Collision"
             msg.memo = json.dumps({
-                "cone_triggered": cone_triggered
+                "cone_triggered": cone_triggered,
+                "collision_state": self.collision_state,
+                "side": self.collision_direction
                 })
 
-            # -> Pubslish message
-            self.team_comms_publisher.publish(msg=msg)
-            self.team_comms_publisher.publish(msg=msg)
-            self.team_comms_publisher.publish(msg=msg)
+            # -> Publish message
             self.team_comms_publisher.publish(msg=msg)
