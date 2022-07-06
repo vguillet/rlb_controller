@@ -2,7 +2,7 @@ from setuptools import setup
 import os
 from glob import glob
 
-package_name = 'Python_nav'
+package_name = 'rlb_controller'
 
 setup(
     name=package_name,
@@ -18,14 +18,14 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='vguillet',
-    maintainer_email='victor.guillet@protonmail.com',
+    maintainer='robotis',
+    maintainer_email='lara@robotis',
     description='TODO: Package description',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'turtlebot = Python_nav.Turtlebot_control_node:main'
+            'rlb_controller = rlb_controller.Turtlebot_control_node:main'
         ],
     },
 )

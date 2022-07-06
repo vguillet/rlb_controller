@@ -1,4 +1,3 @@
-
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
@@ -11,13 +10,22 @@ def generate_launch_description():
         nodes.append(
             Node(
                 namespace= f"Turtle_{i+1}", 
-                package='Python_nav', 
-                executable='turtlebot', 
+                package='rlb_controller', 
+                executable='rlb_controller', 
                 output='screen',
                 parameters=[
                 {'robot_id': f"Turtle_{i+1}"}
                 ]
             )
         )
+
+    nodes.append(
+        Node(
+            namespace= f"", 
+            package='rlb_viz', 
+            executable='rlb_viz', 
+            output='screen'
+        )
+    )
 
     return LaunchDescription(nodes)
