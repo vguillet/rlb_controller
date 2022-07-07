@@ -19,13 +19,13 @@ def generate_launch_description():
             )
         )
 
-    nodes.append(
-        Node(
-            namespace= f"", 
-            package='rlb_viz', 
-            executable='rlb_viz', 
-            output='screen'
-        )
-    )
+    # nodes.append(
+    #     Node(
+    #         namespace= f"", 
+    #         package='rlb_viz', 
+    #         executable='rlb_viz', 
+    #         output='screen'
+    #     )
+    # )
 
     return LaunchDescription(nodes)

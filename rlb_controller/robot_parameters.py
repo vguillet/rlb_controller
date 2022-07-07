@@ -20,7 +20,7 @@ K_a2 = 4.  # On course correction
 # ------------- Collision parameters
 vision_cones = {
     "long_range_cone": {
-        "angle": 30,
+        "angle": 40,
         "threshold": 0.40
     },
     "short_range_cone": {
@@ -35,6 +35,10 @@ vision_cones = {
         "angle": 140,
         "threshold": 0.18
     },
+    "SAFETY_cone": {
+        "angle": 280,
+        "threshold": 0.13
+    }
 }
 
 side_vision_cones = {
@@ -47,3 +51,7 @@ side_vision_cones = {
 collision_delay_length = 1.2
 
 collision_rotation_speed_fraction = 0.5
+
+
+# ------------- RLB_viz parameters
+lazer_scan_plot_range = 1.5
