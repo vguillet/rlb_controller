@@ -113,8 +113,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         # ----------------------------------- Goal subscription
         self.goal_subscription = self.create_subscription(
             msg_type=Goal,
-            topic="/goals_backlog",
-            # topic="/sim_node_publisher/rlb/targets",
+            topic=goals_topic,
             callback=self.goal_subscriber_callback,
             qos_profile=qos
             )
