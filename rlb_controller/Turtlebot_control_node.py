@@ -88,6 +88,11 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             )
 
         # ----------------------------------- Team communications publisher
+        qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_RELIABLE,
+            history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_ALL,
+            )
+
         self.team_comms_publisher = self.create_publisher(
             msg_type=TeamComm,
             topic="/Team_comms",
@@ -103,14 +108,21 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         self.team_comms_publisher.publish(msg=msg)
 
         # ----------------------------------- Team communications subscriber
-        # self.team_comms_subscriber = self.create_subscription(
-        #     msg_type=TeamComm,
-        #     topic="/Team_comms",
-        #     callback=self.team_msg_subscriber_callback,
-        #     qos_profile=qos
-        #     )
+        qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_RELIABLE,
+            history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_ALL,
+            )
+
+        self.team_comms_subscriber = self.create_subscription(
+            msg_type=TeamComm,
+            topic="/Team_comms",
+            callback=self.team_msg_subscriber_callback,
+            qos_profile=qos
+            )
 
         # ----------------------------------- Goal subscription
+        qos = QoSProfile(depth=10)
+
         self.goal_subscription = self.create_subscription(
             msg_type=Goal,
             topic=goals_topic,
@@ -154,13 +166,13 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             self.state_callback
             )
 
-        # ----------------------------------- Collision timer
-        timer_period = 1.  # seconds
+        # # ----------------------------------- Collision timer
+        # timer_period = 1.  # seconds
 
-        self.collision_timer = self.create_timer(
-            timer_period, 
-            self.state_callback
-            )
+        # self.collision_timer = self.create_timer(
+        #     timer_period, 
+        #     self.state_callback
+        #     )
 
         Goto.__init__(self)
         Collision_avoidance.__init__(self)
@@ -196,6 +208,10 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         if self.position is None or self.orientation is None:
             print("!!!!!!!!!!!!!!!!!!!!!!!!! Missing sensor data !!!!!!!!!!!!!!!!!!!!!!!!!")
             self.stop_robot()
+
+            if self.collision_avoidance_mode:
+                self.determine_collision_avoidance_instruction()
+
             return
 
         elif self.goal_sequence is None:
@@ -274,11 +290,17 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
                                     f"\n       w: {twist.angular.z}")
 
     # ---------------------------------- Subscribers
+    def team_msg_subscriber_callback(self, msg):
+        pass
+
     def lazer_scan_subscriber_callback(self, msg):
         scan = list(msg.ranges)
         
         range_min = msg.range_min
         range_max = msg.range_max
+
+        if range_min < lazer_scan_range_min:
+            range_min = lazer_scan_range_min
 
         # -> Clean up ranges
         for i, range_measure in enumerate(scan):
