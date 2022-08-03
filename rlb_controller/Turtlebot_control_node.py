@@ -5,11 +5,11 @@ import sys
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
-from std_msgs.msg import String
+from std_msgs.msg import String, Empty
 from sensor_msgs.msg import JointState, LaserScan
 from geometry_msgs.msg import Twist, PoseStamped
-from rlb_utils.msg import Goal, TeamComm
-from rclpy.qos import QoSProfile
+from rlb_utils.msg import Goal, TeamComm, RLBInterrupt
+
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 import numpy as np
 import math
@@ -55,6 +55,8 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         # self.robot_id = "Turtle_1"
 
         # -> Setup robot states
+        self.kill_switch = True
+
         self.goal_sequence_backlog = {}
         self.goal_sequence = None
         self.goal_sequence_priority = 0
@@ -95,7 +97,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.team_comms_publisher = self.create_publisher(
             msg_type=TeamComm,
-            topic="/Team_comms",
+            topic="/team_comms",
             qos_profile=qos
             )
 
@@ -115,8 +117,21 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.team_comms_subscriber = self.create_subscription(
             msg_type=TeamComm,
-            topic="/Team_comms",
+            topic="/team_comms",
             callback=self.team_msg_subscriber_callback,
+            qos_profile=qos
+            )
+
+        # ----------------------------------- Interrupts subscriber
+        qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_RELIABLE,
+            history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_ALL,
+            )
+
+        self.team_comms_subscriber = self.create_subscription(
+            msg_type=RLBInterrupt,
+            topic=f"/{self.robot_id}/interrupt",
+            callback=self.interrupt_callback,
             qos_profile=qos
             )
 
@@ -166,14 +181,6 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             self.state_callback
             )
 
-        # # ----------------------------------- Collision timer
-        # timer_period = 1.  # seconds
-
-        # self.collision_timer = self.create_timer(
-        #     timer_period, 
-        #     self.state_callback
-        #     )
-
         Goto.__init__(self)
         Collision_avoidance.__init__(self)
 
@@ -203,15 +210,45 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             print(f"--> Angle difference: {round(angle_diff)} degrees ({round(angle_diff_percent*100, 2)}%)")
             print(f"--> Success angle range: {self.success_angle_range}")
 
+    def interrupt_callback(self, msg):
+        self.get_logger().warn(
+            "!!!!!!!!!!!! Interrupt received !!!!!!!!!!!! "
+            f"\n - Interrupt type: {msg.type}"
+            f"\n - Memo: {msg.memo}"
+        )
+
+        if msg.type == "KILL":
+            self.kill_switch = True
+            self.stop_robot()
+
+        elif msg.type == "CLEAR_GOAL":
+            self.goal_sequence = None
+            self.stop_robot()
+
+        elif msg.type == "CLEAR_BACKLOG":
+            self.goal_sequence_backlog = {}
+        
+        elif msg.type == "STOP_GOAL_AND_CLEAR_BACKLOG":
+            self.goal_sequence_backlog = {}
+            self.goal_sequence = None
+            self.stop_robot()
+
+        elif msg.type == "RESET":
+            self.kill_switch = False
+
     # ---------------------------------- Publishers
     def instruction_publisher_callback(self):
         if self.position is None or self.orientation is None:
-            print("!!!!!!!!!!!!!!!!!!!!!!!!! Missing sensor data !!!!!!!!!!!!!!!!!!!!!!!!!")
+            print(f"!!!!!!!!!!!!!!!!!!!!!!!!! {self.robot_id} missing sensor data !!!!!!!!!!!!!!!!!!!!!!!!!")
             self.stop_robot()
 
             if self.collision_avoidance_mode:
                 self.determine_collision_avoidance_instruction()
 
+            return
+
+        elif self.kill_switch:
+            self.get_logger().warn("Kill switch engaged, reset using a RESET interrupt to resume")
             return
 
         elif self.goal_sequence is None:
@@ -486,6 +523,10 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         twist.angular.z = 0.0
 
         # -> Publish instruction msg to robot
+        self.instruction_publisher.publish(msg=twist)
+        self.instruction_publisher.publish(msg=twist)
+        self.instruction_publisher.publish(msg=twist)
+        self.instruction_publisher.publish(msg=twist)
         self.instruction_publisher.publish(msg=twist)
 
 

@@ -4,7 +4,9 @@ goals_topic = "/goals_backlog"
 
 # ------------- Controller parameters
 BURGER_MAX_LIN_VEL = 0.22
+# BURGER_MAX_LIN_VEL = 0.05
 BURGER_MAX_ANG_VEL = 2.84
+# BURGER_MAX_ANG_VEL = 0.6
 
 WAFFLE_MAX_LIN_VEL = 0.26
 WAFFLE_MAX_ANG_VEL = 1.82
