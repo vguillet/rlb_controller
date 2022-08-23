@@ -1,20 +1,14 @@
 
 import os
-import select
-import sys
 import rclpy
 from rclpy.node import Node
-from nav_msgs.msg import Odometry
-from std_msgs.msg import String, Empty
-from sensor_msgs.msg import JointState, LaserScan
+from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist, PoseStamped
 from rlb_utils.msg import Goal, TeamComm, RLBInterrupt
 
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 import numpy as np
 import math
-import random
-import time
 import json
 
 # from .Sequential_goto import Goto
@@ -22,7 +16,7 @@ import json
 from .Hybrid_goto import Goto
 
 from .Collision_avoidance import Collision_avoidance
-from .robot_parameters import *
+from rlb_config.robot_parameters import *
 
 # ================================================================================= Main
 
@@ -52,14 +46,14 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         self.declare_parameter('robot_id', 'Turtle')
         self.robot_id = self.get_parameter('robot_id').get_parameter_value().string_value
 
-        # self.robot_id = "Turtle_1"
-
         # -> Setup robot states
-        self.kill_switch = True
+        self.kill_switch = False
 
         self.goal_sequence_backlog = {}
         self.goal_sequence = None
         self.goal_sequence_priority = 0
+
+        self.prev_point = None
 
         self.current_angular_velocity = 0.
         self.current_linear_velocity = 0.
@@ -158,6 +152,20 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             callback=self.odom_subscriber_callback,
             qos_profile=qos
             )
+
+        # ----------------------------------- Projected odom publisher
+        qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
+            history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_LAST,
+            depth=1
+            )
+
+        self.projected_odom_publisher = self.create_publisher(
+            msg_type=PoseStamped,
+            topic=f"/{self.robot_id}/pose_projected",
+            qos_profile=qos
+            )
+
 
         # ----------------------------------- Lazer scan subscription
         qos = QoSProfile(
@@ -326,6 +334,32 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
                                     f"\n       v: {twist.angular.y}" +
                                     f"\n       w: {twist.angular.z}")
 
+    def projected_pose_publisher_callback(self):
+        if self.projected_pose is not None:
+            # -> Construct projected pose
+            msg = PoseStamped()
+
+            msg.pose.position.x = self.projected_pose[0]
+            msg.pose.position.y = self.projected_pose[1]
+
+            yaw_angle = math.tan(
+                self.current_direct_path[1][1]-self.current_direct_path[1][0]/
+                (self.current_direct_path[0][1]-self.current_direct_path[0][0] or 0.00000000001) * 180/math.pi
+                )
+
+            qx, qy, qz, qw = self.__get_quaternion_from_euler(
+                roll=0,
+                pitch=0,
+                yaw=yaw_angle
+            )
+
+            msg.pose.orientation.x = qx
+            msg.pose.orientation.y = qy
+            msg.pose.orientation.z = qz
+            msg.pose.orientation.w = qw
+
+            self.projected_odom_publisher.publish(msg)
+
     # ---------------------------------- Subscribers
     def team_msg_subscriber_callback(self, msg):
         pass
@@ -351,6 +385,9 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         self.orientation = self.__euler_from_quaternion(
             quat=msg.pose.orientation
         )[-1]
+        
+        # -> Publish cooresponding projected pose
+        self.projected_pose_publisher_callback()
      
     def goal_subscriber_callback(self, msg):
         print(f"++++++++++++++++++++++++++++++ Goal sequence {msg.goal_sequence_id} (for {msg.robot_id}) received by {self.robot_id} ++++++++++++++++++++++++++++++")
@@ -393,6 +430,37 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             return path_vector
 
     @property
+    def current_direct_path(self):
+        try:
+            if self.goal_sequence is None:
+                return None
+            if self.prev_point is not None:
+                return (self.prev_point, self.goal_sequence[0][0:2])
+            else:
+                return (self.position, self.goal_sequence[0][0:2])
+        except:
+            return None
+
+    @property
+    def projected_pose(self):
+        if self.current_direct_path is None:
+            return None
+
+        p1 = np.array(self.current_direct_path[0])
+        p2 = np.array(self.current_direct_path[1])
+        p3 = np.array(self.position)
+
+        # -> Calc. distance between p1 and p2
+        l2 = np.sum((p1-p2)**2)
+ 
+        t = np.sum((p3 - p1) * (p2 - p1)) / l2
+
+        # #if you need the point to project on line segment between p1 and p2 or closest point of the line segment
+        # t = max(0, min(1, np.sum((p3 - p1) * (p2 - p1)) / l2))
+
+        return p1 + t * (p2 - p1)
+
+    @property
     def distance_to_goal(self):
         return math.sqrt(self.path_vector[0]**2 + self.path_vector[1]**2)
 
@@ -430,6 +498,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
     def check_subgoal_state(self):
         # -> Remove sub-goal if reached
         if self.distance_to_goal < self.success_distance_range:
+            self.prev_point = self.goal_sequence[0][0:2]
             print(f"-------------------------------------> Subgoal {self.goal_sequence[0]} completed")
             self.goal_sequence.pop(0)
 
@@ -438,7 +507,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         
             if len(self.goal_sequence) != 0:
                 print(f"                                       New subgoal: {self.goal_sequence[0]}   (distance: {round(self.distance_to_goal, 3)})")
-            
+
             print(f"                                       Goal sequence left: {self.goal_sequence}")
             return True
 
@@ -459,6 +528,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         # -> Retrieve cooresponding goal sequence from goal_backlog
         if selected_goal_sequence_priority != -1:
             goal_sequence = self.goal_sequence_backlog[selected_goal_sequence_priority].pop(0)
+
 
             self.goal_sequence = goal_sequence["sequence"]
             self.goal_id = goal_sequence["ID"]
@@ -496,6 +566,26 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         #     yaw = (180 - abs(yaw)) + 180
     
         return [roll, pitch, yaw]
+
+    @staticmethod
+    def __get_quaternion_from_euler(roll, pitch, yaw):
+        """
+        Convert an Euler angle to a quaternion.
+        
+        Input
+            :param roll: The roll (rotation around x-axis) angle in radians.
+            :param pitch: The pitch (rotation around y-axis) angle in radians.
+            :param yaw: The yaw (rotation around z-axis) angle in radians.
+        
+        Output
+            :return qx, qy, qz, qw: The orientation in quaternion [x,y,z,w] format
+        """
+        qx = np.sin(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) - np.cos(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+        qy = np.cos(roll/2) * np.sin(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.cos(pitch/2) * np.sin(yaw/2)
+        qz = np.cos(roll/2) * np.cos(pitch/2) * np.sin(yaw/2) - np.sin(roll/2) * np.sin(pitch/2) * np.cos(yaw/2)
+        qw = np.cos(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+        
+        return qx, qy, qz, qw
 
     @staticmethod
     def __make_simple_profile(output, input, slop):

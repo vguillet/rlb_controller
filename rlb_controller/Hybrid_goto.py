@@ -1,5 +1,4 @@
-from math import cos
-from .robot_parameters import *
+from rlb_config.robot_parameters import *
 
 class Goto:
     # -> Setup goto specs

@@ -1,8 +1,6 @@
-
-import time
 import json
 from rlb_utils.msg import TeamComm
-from .robot_parameters import *
+from rlb_config.robot_parameters import *
 
 class Collision_avoidance:
     # -> Setup robot collision avoidance spec
