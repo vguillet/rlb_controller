@@ -19,6 +19,30 @@ def generate_launch_description():
             )
         )
 
+        nodes.append(
+            Node(
+                namespace= f"Turtle_{i+1}", 
+                package='rlb_msg_filter', 
+                executable='rlb_msg_filter', 
+                output='screen',
+                parameters=[
+                {'robot_id': f"Turtle_{i+1}"}
+                ]
+            )
+        )
+
+        nodes.append(
+            Node(
+                namespace= f"Turtle_{i+1}", 
+                package='rlb_mba_agent', 
+                executable='rlb_mba_agent', 
+                output='screen',
+                parameters=[
+                {'robot_id': f"Turtle_{i+1}"}
+                ]
+            )
+        )
+
     # nodes.append(
     #     Node(
     #         namespace= f"", 

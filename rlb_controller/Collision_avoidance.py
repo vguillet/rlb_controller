@@ -196,9 +196,12 @@ class Collision_avoidance:
     def __publish_collision_teamcomm(self, cone_triggered: str or None = None):
             # -> Announce end of collision on teams comms
             msg = TeamComm()
-            msg.robot_id = self.robot_id
+            
+            msg.source = self.robot_id
+            msg.source_type = "robot"
+            msg.target = "all"
             msg.type = "Collision"
-            msg.memo = json.dumps({
+            msg.data = json.dumps({
                 "cone_triggered": cone_triggered,
                 "collision_state": self.collision_state,
                 "side": self.collision_direction

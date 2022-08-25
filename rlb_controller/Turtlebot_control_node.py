@@ -1,5 +1,6 @@
 
 import os
+from tabnanny import verbose
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
@@ -37,7 +38,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
     def __init__(self):
         # -> Initialise inherited classes
-        Node.__init__(self, 'Python_controller')
+        Node.__init__(self, 'main_controller')
 
         # -> Setup classes
         self.verbose = 0
@@ -71,7 +72,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         
         self.instruction_publisher = self.create_publisher(
             msg_type=Twist,
-            topic=f"/{self.robot_id}/cmd_vel",
+            topic=f"/{self.robot_id}/control/cmd_vel",
             qos_profile=qos
             )
 
@@ -91,15 +92,15 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.team_comms_publisher = self.create_publisher(
             msg_type=TeamComm,
-            topic="/team_comms",
+            topic="/rlb_msgs",
             qos_profile=qos
             )
 
         # -> Push initialisation msg
         msg = TeamComm()
-        msg.robot_id = self.robot_id
+        msg.source = self.robot_id
+        msg.source_type = "robot"
         msg.type = "Initial"
-        msg.memo = ""
 
         self.team_comms_publisher.publish(msg=msg)
 
@@ -124,7 +125,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.team_comms_subscriber = self.create_subscription(
             msg_type=RLBInterrupt,
-            topic=f"/{self.robot_id}/interrupt",
+            topic=f"/{self.robot_id}/control/interrupt",
             callback=self.interrupt_callback,
             qos_profile=qos
             )
@@ -148,7 +149,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.odom_subscription = self.create_subscription(
             msg_type=PoseStamped,
-            topic=f"/{self.robot_id}/pose",
+            topic=f"/{self.robot_id}/state/pose",
             callback=self.odom_subscriber_callback,
             qos_profile=qos
             )
@@ -162,7 +163,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.projected_odom_publisher = self.create_publisher(
             msg_type=PoseStamped,
-            topic=f"/{self.robot_id}/pose_projected",
+            topic=f"/{self.robot_id}/state/pose_projected",
             qos_profile=qos
             )
 
@@ -176,7 +177,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.lazer_scan_subscription = self.create_subscription(
             msg_type=LaserScan,
-            topic=f"/{self.robot_id}/scan",
+            topic=f"/{self.robot_id}/state/scan",
             callback=self.lazer_scan_subscriber_callback,
             qos_profile=qos
         )
@@ -194,13 +195,15 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
     # ================================================= Callbacks definition
     def state_callback(self):
-        print("\n")
-        print(f"--> position: {self.position}")
-        print(f"--> orientation: {self.orientation}")
+        if self.verbose > 0:
+            print("\n")
+            print(f"--> position: {self.position}")
+            print(f"--> orientation: {self.orientation}")
         
         if self.goal_sequence is not None:
-            print(f"--> Goal: {self.goal}")
-            print(f"--> distance_to_goal: {round(self.distance_to_goal, 3)}")
+            if self.verbose > 0:
+                print(f"--> Goal: {self.goal}")
+                print(f"--> distance_to_goal: {round(self.distance_to_goal, 3)}")
 
             angle_diff = self.goal_angle - self.orientation
 
@@ -215,8 +218,9 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
             angle_diff_percent = abs(angle_diff/180)
 
-            print(f"--> Angle difference: {round(angle_diff)} degrees ({round(angle_diff_percent*100, 2)}%)")
-            print(f"--> Success angle range: {self.success_angle_range}")
+            if self.verbose > 0:
+                print(f"--> Angle difference: {round(angle_diff)} degrees ({round(angle_diff_percent*100, 2)}%)")
+                print(f"--> Success angle range: {self.success_angle_range}")
 
     def interrupt_callback(self, msg):
         self.get_logger().warn(
@@ -247,7 +251,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
     # ---------------------------------- Publishers
     def instruction_publisher_callback(self):
         if self.position is None or self.orientation is None:
-            print(f"!!!!!!!!!!!!!!!!!!!!!!!!! {self.robot_id} missing sensor data !!!!!!!!!!!!!!!!!!!!!!!!!")
+            self.get_logger().warn(f"!!!!!!!!!!!!!!!!!!!!!!!!! {self.robot_id} missing sensor data !!!!!!!!!!!!!!!!!!!!!!!!!")
             self.stop_robot()
 
             if self.collision_avoidance_mode:
@@ -264,12 +268,13 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             self.get_new_goal_sequence()
 
             if self.goal_sequence is not None:
-                print("=================================================================")
-                print(f"     New goal sequence selected: {self.goal_sequence}")
-                print(f"     New goal sequence priority: {self.goal_sequence_priority}")
-                print(f"     First goal: {self.goal}    (distance: {round(self.distance_to_goal, 3)})")
-                print("=================================================================")
-            
+                if self.verbose > 0:
+                    print("=================================================================")
+                    print(f"     New goal sequence selected: {self.goal_sequence}")
+                    print(f"     New goal sequence priority: {self.goal_sequence_priority}")
+                    print(f"     First goal: {self.goal}    (distance: {round(self.distance_to_goal, 3)})")
+                    print("=================================================================")
+                
             else:
                 self.stop_robot()
                 
@@ -278,7 +283,8 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         # -> Check goal sequence state
         if self.check_goal_sequence():
             self.goal_sequence = None
-            print("++++++++++++++++++++++++++++++++++++ Goal Completed ++++++++++++++++++++++++++++++++++++")
+            if self.verbose > 0:
+                print("++++++++++++++++++++++++++++++++++++ Goal Completed ++++++++++++++++++++++++++++++++++++")
             return
 
         # -> Check subgoal state, remove subgoal reached
@@ -390,7 +396,9 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         self.projected_pose_publisher_callback()
      
     def goal_subscriber_callback(self, msg):
-        print(f"++++++++++++++++++++++++++++++ Goal sequence {msg.goal_sequence_id} (for {msg.robot_id}) received by {self.robot_id} ++++++++++++++++++++++++++++++")
+        if self.verbose > 0:
+            print(f"++++++++++++++++++++++++++++++ Goal sequence {msg.goal_sequence_id} (for {msg.robot_id}) received by {self.robot_id} ++++++++++++++++++++++++++++++")
+        
         # -> If message is addressed to robot
         if msg.robot_id == self.robot_id:
             goal_sequence = {
@@ -455,9 +463,6 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
  
         t = np.sum((p3 - p1) * (p2 - p1)) / l2
 
-        # #if you need the point to project on line segment between p1 and p2 or closest point of the line segment
-        # t = max(0, min(1, np.sum((p3 - p1) * (p2 - p1)) / l2))
-
         return p1 + t * (p2 - p1)
 
     @property
@@ -478,7 +483,8 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
     
     def __publish_goal_teamcomm(self):
         msg = TeamComm()
-        msg.robot_id = self.robot_id
+        msg.source = self.robot_id
+        msg.source_type = "robot"
         msg.type = "Goal_annoucement"
 
         # -> Construct memo
@@ -499,16 +505,21 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         # -> Remove sub-goal if reached
         if self.distance_to_goal < self.success_distance_range:
             self.prev_point = self.goal_sequence[0][0:2]
-            print(f"-------------------------------------> Subgoal {self.goal_sequence[0]} completed")
+            
+            if self.verbose > 0:
+                print(f"-------------------------------------> Subgoal {self.goal_sequence[0]} completed")
+            
             self.goal_sequence.pop(0)
 
             # -> Announce new subgoal on teams comms
             self.__publish_goal_teamcomm()
         
             if len(self.goal_sequence) != 0:
-                print(f"                                       New subgoal: {self.goal_sequence[0]}   (distance: {round(self.distance_to_goal, 3)})")
+                if self.verbose > 0:
+                    print(f"                                       New subgoal: {self.goal_sequence[0]}   (distance: {round(self.distance_to_goal, 3)})")
 
-            print(f"                                       Goal sequence left: {self.goal_sequence}")
+            if self.verbose > 0:
+                print(f"                                       Goal sequence left: {self.goal_sequence}")
             return True
 
         else:
