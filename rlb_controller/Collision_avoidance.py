@@ -208,4 +208,4 @@ class Collision_avoidance:
                 })
 
             # -> Publish message
-            self.team_comms_publisher.publish(msg=msg)
+            self.rlb_msgs_publisher.publish(msg=msg)

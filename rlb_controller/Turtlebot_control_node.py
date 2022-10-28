@@ -72,7 +72,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         
         self.instruction_publisher = self.create_publisher(
             msg_type=Twist,
-            topic=f"/{self.robot_id}/control/cmd_vel",
+            topic=f"/{self.robot_id}/cmd_vel",
             qos_profile=qos
             )
 
@@ -90,32 +90,44 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_ALL,
             )
 
-        self.team_comms_publisher = self.create_publisher(
-            msg_type=TeamComm,
-            topic="/rlb_msgs",
-            qos_profile=qos
-            )
-
-        # -> Push initialisation msg
-        msg = TeamComm()
-        msg.source = self.robot_id
-        msg.source_type = "robot"
-        msg.type = "Initial"
-
-        self.team_comms_publisher.publish(msg=msg)
+        # self.team_comms_publisher = self.create_publisher(
+        #     msg_type=TeamComm,
+        #     topic="/team_comms",
+        #     qos_profile=qos
+        #     )
 
         # ----------------------------------- Team communications subscriber
+        # qos = QoSProfile(
+        #     reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_RELIABLE,
+        #     history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_ALL,
+        #     )
+
+        # self.team_comms_subscriber = self.create_subscription(
+        #     msg_type=TeamComm,
+        #     topic="/team_comms",
+        #     callback=self.team_msg_subscriber_callback,
+        #     qos_profile=qos
+        #     )
+
+        # ----------------------------------- rlb_msgs publisher
         qos = QoSProfile(
             reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_RELIABLE,
             history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_ALL,
             )
 
-        self.team_comms_subscriber = self.create_subscription(
+        self.rlb_msgs_publisher = self.create_publisher(
             msg_type=TeamComm,
-            topic="/team_comms",
-            callback=self.team_msg_subscriber_callback,
+            topic="/rlb_msgs",
             qos_profile=qos
             )
+
+        # -> Push initialization msg
+        msg = TeamComm()
+        msg.source = self.robot_id
+        msg.source_type = "robot"
+        msg.type = "Initial"
+
+        self.rlb_msgs_publisher.publish(msg=msg)
 
         # ----------------------------------- Interrupts subscriber
         qos = QoSProfile(
@@ -149,7 +161,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.odom_subscription = self.create_subscription(
             msg_type=PoseStamped,
-            topic=f"/{self.robot_id}/state/pose",
+            topic=f"/{self.robot_id}/pose",
             callback=self.odom_subscriber_callback,
             qos_profile=qos
             )
@@ -163,12 +175,12 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.projected_odom_publisher = self.create_publisher(
             msg_type=PoseStamped,
-            topic=f"/{self.robot_id}/state/pose_projected",
+            topic=f"/{self.robot_id}/pose_projected",
             qos_profile=qos
             )
 
 
-        # ----------------------------------- Lazer scan subscription
+        # ----------------------------------- Laser scan subscription
         qos = QoSProfile(
             reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
             history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_LAST,
@@ -177,7 +189,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
 
         self.lazer_scan_subscription = self.create_subscription(
             msg_type=LaserScan,
-            topic=f"/{self.robot_id}/state/scan",
+            topic=f"/{self.robot_id}/scan",
             callback=self.lazer_scan_subscriber_callback,
             qos_profile=qos
         )
@@ -367,8 +379,8 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             self.projected_odom_publisher.publish(msg)
 
     # ---------------------------------- Subscribers
-    def team_msg_subscriber_callback(self, msg):
-        pass
+    # def team_msg_subscriber_callback(self, msg):
+    #     pass
 
     def lazer_scan_subscriber_callback(self, msg):
         scan = list(msg.ranges)
@@ -485,7 +497,7 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
         msg = TeamComm()
         msg.source = self.robot_id
         msg.source_type = "robot"
-        msg.type = "Goal_annoucement"
+        msg.type = "Goal_announcement"
 
         # -> Construct memo
         sequence = []
@@ -498,8 +510,8 @@ class Minimal_path_sequence(Node, Goto, Collision_avoidance):
             }
         msg.memo = json.dumps(goal)
 
-        # -> Pubslish message
-        self.team_comms_publisher.publish(msg=msg)
+        # -> Publish message
+        self.rlb_msgs_publisher.publish(msg=msg)
 
     def check_subgoal_state(self):
         # -> Remove sub-goal if reached
